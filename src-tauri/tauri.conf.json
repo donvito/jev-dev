@@ -19,6 +19,7 @@
         "minWidth": 1100,
         "minHeight": 720,
         "resizable": true,
+        "zoomHotkeysEnabled": false,
         "backgroundColor": "#f9fafb"
       }
     ],

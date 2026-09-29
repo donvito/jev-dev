@@ -39,7 +39,7 @@
 </div>
 
 <style>
-  .dataset-workbench { min-width: 0; height: calc(100vh - 74px); display: flex; flex-direction: column; }
+  .dataset-workbench { min-width: 0; height: calc(var(--app-viewport-height, 100dvh) - 74px); display: flex; flex-direction: column; }
   .dataset-toolbar { display: flex; align-items: center; gap: 10px; min-height: 36px; flex-wrap: wrap; flex-shrink: 0; }
   .dataset-toolbar > strong { font-size: 12px; font-weight: 550; color: var(--text-primary); }
   .row-count { font-size: 10px; color: var(--text-muted); }
