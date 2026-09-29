@@ -2,6 +2,8 @@
 
 A local-first desktop workbench for experimenting with Jev.
 
+![jev dev Playground in dark mode, with JSON editors and confidence results](docs/images/playground.png)
+
 ## Prerequisites
 
 - Node.js 22.12+ and npm
