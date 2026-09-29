@@ -17,8 +17,18 @@ fn entry() -> AppResult<Entry> {
         .map_err(|_| AppError::new("credentials", "The OS credential store is unavailable."))
 }
 
-pub fn get_key() -> AppResult<Zeroizing<String>> {
-    match entry()?.get_password() {
+// Credential access may wait for an OS authorization dialog. Keep that wait
+// off both the window's event loop and the asynchronous runtime workers.
+async fn credential_task<T: Send + 'static>(
+    operation: impl FnOnce() -> AppResult<T> + Send + 'static,
+) -> AppResult<T> {
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(|_| AppError::new("credentials", "The OS credential store is unavailable."))?
+}
+
+pub async fn get_key() -> AppResult<Zeroizing<String>> {
+    credential_task(|| match entry()?.get_password() {
         Ok(key) => Ok(Zeroizing::new(key)),
         Err(keyring::Error::NoEntry) => Err(AppError::new(
             "missing_api_key",
@@ -28,12 +38,13 @@ pub fn get_key() -> AppResult<Zeroizing<String>> {
             "credentials",
             "The OS credential store could not be read. Check that it is unlocked.",
         )),
-    }
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn get_settings() -> AppResult<Settings> {
-    match entry()?.get_password() {
+pub async fn get_settings() -> AppResult<Settings> {
+    credential_task(|| match entry()?.get_password() {
         Ok(key) => {
             let key = Zeroizing::new(key);
             Ok(Settings {
@@ -47,34 +58,74 @@ pub fn get_settings() -> AppResult<Settings> {
             "credentials",
             "The OS credential store could not be read. Check that it is unlocked.",
         )),
-    }
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn save_api_key(api_key: String) -> AppResult<()> {
+pub async fn save_api_key(api_key: String) -> AppResult<()> {
     let key = Zeroizing::new(api_key);
-    let key = key.trim();
-    if key.is_empty() || key.len() > 4096 || !key.bytes().all(|b| b.is_ascii_graphic()) {
+    let trimmed = key.trim();
+    if trimmed.is_empty() || trimmed.len() > 4096 || !trimmed.bytes().all(|b| b.is_ascii_graphic())
+    {
         return Err(AppError::new(
             "invalid_api_key",
             "Enter an API key with no spaces or line breaks.",
         ));
     }
-    entry()?.set_password(key).map_err(|_| {
-        AppError::new(
-            "credentials",
-            "The API key could not be saved in the OS credential store.",
-        )
+    credential_task(move || {
+        entry()?.set_password(key.trim()).map_err(|_| {
+            AppError::new(
+                "credentials",
+                "The API key could not be saved in the OS credential store.",
+            )
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_api_key() -> AppResult<()> {
-    match entry()?.delete_credential() {
+pub async fn delete_api_key() -> AppResult<()> {
+    credential_task(|| match entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(_) => Err(AppError::new(
             "credentials",
             "The API key could not be removed from the OS credential store.",
         )),
+    })
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credential_work_does_not_run_on_the_invoking_thread() {
+        let caller = std::thread::current().id();
+        let worker =
+            tauri::async_runtime::block_on(credential_task(|| Ok(std::thread::current().id())))
+                .unwrap();
+        assert_ne!(caller, worker);
+    }
+
+    #[test]
+    fn invalid_keys_are_rejected_without_accessing_the_credential_store() {
+        tauri::async_runtime::block_on(async {
+            for invalid in [
+                "".into(),
+                " \n ".into(),
+                "a b".into(),
+                "a\tb".into(),
+                "x".repeat(4097),
+            ] {
+                let error = save_api_key(invalid).await.unwrap_err();
+                assert_eq!(error.kind, "invalid_api_key");
+                assert_eq!(
+                    error.message,
+                    "Enter an API key with no spaces or line breaks."
+                );
+            }
+        });
     }
 }

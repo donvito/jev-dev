@@ -213,7 +213,7 @@ pub async fn execute_request(
     request: Value,
 ) -> AppResult<Evaluation> {
     validate_request(&request)?;
-    let key = credentials::get_key()?;
+    let key = credentials::get_key().await?;
     let mut authorization =
         HeaderValue::from_str(&format!("Bearer {}", key.as_str())).map_err(|_| {
             AppError::new(
