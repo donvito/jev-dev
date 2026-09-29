@@ -1,0 +1,72 @@
+:root {
+  color-scheme: light;
+  --canvas: #f7f7f7;
+  --surface: #ffffff;
+  --surface-subtle: #fafafa;
+  --surface-hover: #eeeeee;
+  --surface-active: #e3e3e3;
+  --text-primary: #111111;
+  --text-secondary: #444444;
+  --text-muted: #666666;
+  --border: #dddddd;
+  --border-strong: #aaaaaa;
+  --control: #242424;
+  --control-text: #ffffff;
+  --chart-track: #e2e2e2;
+  --chart-fill: #555555;
+  --focus: #555555;
+  --selection: #d8d8d8;
+  --caret: #000000;
+  --overlay: #00000055;
+  --shadow: #00000022;
+  --syntax-key: #0550ae;
+  --syntax-string: #8f3d26;
+  --syntax-number: #805400;
+  --syntax-boolean: #6f42c1;
+  --syntax-null: #6b4d8d;
+  --syntax-punctuation: #555e68;
+  --syntax-bracket: #4b5563;
+  --syntax-invalid: #b42335;
+  --bg: var(--canvas);
+  --panel: var(--surface);
+  --line: var(--border);
+  --text: var(--text-primary);
+  --muted: var(--text-muted);
+  --accent: var(--control);
+  --tint: var(--surface-hover);
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: #111111;
+  --surface: #171717;
+  --surface-subtle: #1d1d1d;
+  --surface-hover: #292929;
+  --surface-active: #363636;
+  --text-primary: #f2f2f2;
+  --text-secondary: #d0d0d0;
+  --text-muted: #aaaaaa;
+  --border: #363636;
+  --border-strong: #626262;
+  --control: #ededed;
+  --control-text: #171717;
+  --chart-track: #3b3b3b;
+  --chart-fill: #cccccc;
+  --focus: #aaaaaa;
+  --selection: #484848;
+  --caret: #ffffff;
+  --overlay: #00000099;
+  --shadow: #00000066;
+  --syntax-key: #9cdcfe;
+  --syntax-string: #e0ac95;
+  --syntax-number: #e7c085;
+  --syntax-boolean: #ccaef5;
+  --syntax-null: #bfb1d8;
+  --syntax-punctuation: #b0b7c2;
+  --syntax-bracket: #c1c8d0;
+  --syntax-invalid: #ff9ba6;
+}
+html, body { background: var(--canvas); color: var(--text-primary); }
+input, textarea, select { color-scheme: inherit; }
+input::placeholder, textarea::placeholder { color: var(--text-muted); }
+.appearance-select { border: 1px solid var(--border); border-radius: 3px; background: var(--surface); color: var(--text-primary); padding: 5px 8px; min-width: 120px; font-size: 11px; }
+.theme-toggle { flex-shrink: 0; }
