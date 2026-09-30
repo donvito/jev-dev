@@ -9,12 +9,13 @@
   import { applyZoom, isZoomLevel, readZoomPreference, saveZoomPreference, stepZoom, zoomShortcut, type ZoomLevel } from './lib/zoom';
   import QuestionEditor from './lib/QuestionEditor.svelte';
   import ResponseView from './lib/ResponseView.svelte';
+  import RunError from './lib/RunError.svelte';
   import RecentRuns from './lib/RecentRuns.svelte';
   import DatasetView from './lib/DatasetView.svelte';
   import Experiments from './lib/Experiments.svelte';
   import { createSeedWorkspace, generateDemoResponse, validateRequest, lintQuestions, importDataset, exportCode } from './lib/domain';
   import type { Request, Questions, Run, Project, Session, Dataset, TypeSafeResponse } from './lib/domain';
-  import { openDocumentation, desktop, loadWorkspace, saveWorkspace, listRuns, saveRun, executeLive, download, errorMessage } from './lib/storage';
+  import { openDocumentation, desktop, loadWorkspace, saveWorkspace, listRuns, saveRun, executeLive, download, errorMessage, errorSnapshot } from './lib/storage';
   import { readExecutionMode, saveExecutionMode, type ExecutionMode } from './lib/execution-mode';
   import { UNFILED_PROJECT_ID, sessionProjectId, relatedSessionIds } from './lib/session-organization';
   type Page = 'Playground'|'Experiments'|'Datasets'|'Projects'|'History'|'Settings';
@@ -248,12 +249,13 @@
     try{
       const result=await execute(request);run.response_json=result.response;run.resolved_model=result.response.model;
       run.latency_ms=result.latency_ms;run.input_tokens=result.response.usage?.input_tokens??null;run.output_tokens=result.response.usage?.output_tokens??null;
-    }catch(e){run.status='error';run.error_json=typeof e==='object'?e:{message:errorMessage(e)};run.latency_ms=Math.round(performance.now()-started);}
+    }catch(e){run.status='error';run.error_json=errorSnapshot(e);run.latency_ms=Math.round(performance.now()-started);}
     if(viewKey()===originViewKey){showRunResponse(run);activeHistoryRunId=run.id;}
     try{
       await saveRun(run);runs=[run,...runs];draftRunIds={...draftRunIds,[sourceDraftKey]:run.id};
       if(run.status==='success')notify('Run complete · snapshot saved locally');
-    }catch(e){error='Run finished, but could not save the snapshot: '+errorMessage(e);}
+      else if(page!=='Playground'||currentRun?.id!==run.id)notify('Run failed · open run history for error details');
+    }catch(e){error=[run.status==='error'?errorMessage(run.error_json):'', 'Run finished, but could not save the snapshot: '+errorMessage(e)].filter(Boolean).join('\n');}
     finally{running=false;runningViewKey=null;}
   }
   function restore(run:Run,fork=false,preferDraft=false) {
@@ -309,9 +311,9 @@
           <!-- Focusable separators implement the WAI-ARIA window splitter pattern. -->
           <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
           <div class="pane-splitter" role="separator" aria-label="Resize questions and response" aria-orientation="vertical" aria-valuemin="20" aria-valuemax="60" aria-valuenow={Math.round(paneWidths[2]*100)} tabindex="0" onpointerdown={e=>startResize(e,1)} onkeydown={e=>resizeKey(e,1)}></div>
-          <div class="pane response-pane"><div class="pane-header"><div><h2>Response</h2>{#if response}<span class="response-status">{isExample?'example':response.model==='synthetic-demo'?'demo':'200'}</span>{/if}</div><div class="pane-tools"><div class="segmented"><button class:chosen={responseMode==='json'} onclick={()=>responseMode='json'}>JSON</button><button class:chosen={responseMode==='visual'} onclick={()=>responseMode='visual'}>Overview</button></div><button class="icon-button" aria-label="Copy response JSON" title="Copy response" disabled={!response} onclick={()=>copy(JSON.stringify(response,null,2))}><Copy size={12}/></button><button class="icon-button" aria-label={responseExpanded?"Restore editor layout":"Expand response"} title={responseExpanded?"Restore editor layout":"Expand response"} onclick={()=>responseExpanded=!responseExpanded}>{#if responseExpanded}<Minimize2 size={13}/>{:else}<Maximize2 size={13}/>{/if}</button></div></div>
-            <div class="pane-body">{#if runningHere}<div class="tool-empty">Running evaluation…</div>{:else if responseMode==='json'}<CodeEditor value={response?JSON.stringify(response,null,2):''} readonly label="Response JSON" wrap={wrapCode}/>{:else}<ResponseView {response} questions={responseRequest?.questions||{}} requestedModel={responseRequest?.model} latencyMs={responseLatency} example={isExample} running={runningHere}/>{/if}</div>
-            <div class="pane-footer"><span>{response?.model||'No response'}{#if response&&responseLatency!==null} · {responseLatency} ms{/if}</span><span title={responseDraftChanged?'Inputs have changed. Run again to update the response.':undefined}>{responseDraftChanged?'Inputs changed':response?.usage?.input_tokens!==null&&response?.usage?.input_tokens!==undefined?`${response.usage.input_tokens} input tokens`:isExample?'Synthetic example':currentRun?'Saved':''}</span></div>
+          <div class="pane response-pane"><div class="pane-header"><div><h2>Response</h2>{#if currentRun?.status==='error'}<span class="response-status">Failed</span>{:else if response}<span class="response-status">{isExample?'example':response.model==='synthetic-demo'?'demo':'200'}</span>{/if}</div><div class="pane-tools"><div class="segmented"><button class:chosen={responseMode==='json'} onclick={()=>responseMode='json'}>JSON</button><button class:chosen={responseMode==='visual'} onclick={()=>responseMode='visual'}>Overview</button></div><button class="icon-button" aria-label="Copy response JSON" title="Copy response" disabled={!response&&currentRun?.status!=='error'} onclick={()=>copy(JSON.stringify(currentRun?.status==='error'?currentRun.error_json:response,null,2))}><Copy size={12}/></button><button class="icon-button" aria-label={responseExpanded?"Restore editor layout":"Expand response"} title={responseExpanded?"Restore editor layout":"Expand response"} onclick={()=>responseExpanded=!responseExpanded}>{#if responseExpanded}<Minimize2 size={13}/>{:else}<Maximize2 size={13}/>{/if}</button></div></div>
+            <div class="pane-body">{#if runningHere}<div class="tool-empty">Running evaluation…</div>{:else if currentRun?.status==='error'}<RunError error={currentRun.error_json}/>{:else if responseMode==='json'}<CodeEditor value={response?JSON.stringify(response,null,2):''} readonly label="Response JSON" wrap={wrapCode}/>{:else}<ResponseView {response} questions={responseRequest?.questions||{}} requestedModel={responseRequest?.model} latencyMs={responseLatency} example={isExample} running={runningHere}/>{/if}</div>
+            <div class="pane-footer"><span>{currentRun?.status==='error'?'Run failed':response?.model||'No response'}{#if response&&responseLatency!==null} · {responseLatency} ms{/if}</span><span title={responseDraftChanged?'Inputs have changed. Run again to update the response.':undefined}>{responseDraftChanged?'Inputs changed':response?.usage?.input_tokens!==null&&response?.usage?.input_tokens!==undefined?`${response.usage.input_tokens} input tokens`:isExample?'Synthetic example':currentRun?'Saved':''}</span></div>
           </div>
         </section>
         {#if showWarnings&&warnings.length}<div class="warning-panel">{#each warnings as warning}<p><AlertTriangle size={12}/><strong>{warning.questionId}</strong> {warning.message}</p>{/each}</div>{/if}
