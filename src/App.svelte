@@ -10,6 +10,7 @@
   import QuestionEditor from './lib/QuestionEditor.svelte';
   import ResponseView from './lib/ResponseView.svelte';
   import RunError from './lib/RunError.svelte';
+  import { parseQuestionsJSON } from './lib/request-input';
   import RecentRuns from './lib/RecentRuns.svelte';
   import DatasetView from './lib/DatasetView.svelte';
   import Experiments from './lib/Experiments.svelte';
@@ -83,12 +84,14 @@
   let model = $state(seed.sessions[0].requested_model), mode = $state<ExecutionMode>('demo');
   let stateMode = $state<'visual'|'json'|'text'>('json'), questionMode = $state<'visual'|'json'>('json'), responseMode = $state<'visual'|'json'>('json');
   let response = $state<TypeSafeResponse|null>(null);
+  let requestError = $state<Record<string,unknown>|null>(null);
   let responseRequest = $state<Request|null>(null);
   let responseLatency = $state<number|null>(null);
   let responseExpanded = $state(false);
   let isExample = $state(false), running = $state(false), error = $state(''), toast = $state(''), loading = $state(true), credentialExists = $state(false), persisted = $state(true);
   let credentialChecking = $state(desktop), modeChosen = false;
   let currentRun = $state<Run|null>(null), apiKey = $state(''), keyBusy = $state(false), showProjectMenu = $state(false), showSessionMenu = $state(false), historySearch = $state('');
+  const responseError = $derived(requestError ?? (currentRun?.status==='error' ? currentRun.error_json : null));
   let modal = $state<''|'export'|'new-project'|'move-session'|'dataset'|'compare'|'help'>('');
   let moveDestination = $state(UNFILED_PROJECT_ID), moveProjectName = $state('');
   let exportFormat = $state<'json'|'typescript'|'python'|'curl'>('json'), projectName = $state(''), projectDescription = $state(''), datasetName = $state(''), datasetText = $state(''), importError = $state('');
@@ -131,13 +134,13 @@
     projectViewRunIds={...projectViewRunIds,[activeProjectId]:activeHistoryRunId};
   }
   function showRunResponse(run:Run|null) {
-    currentRun=run;response=run?.response_json??null;responseRequest=run?.request_json??null;
+    requestError=null;currentRun=run;response=run?.response_json??null;responseRequest=run?.request_json??null;
     responseLatency=run?.latency_ms??null;isExample=false;
     error=run?.status==='error'?errorMessage(run.error_json):'';
   }
   async function focusHistory() {sidebarCollapsed=false;await tick();historyList?.focusSearch();}
 
-  function clearEditorErrors() {editorErrors={};questionEditorError='';}
+  function clearEditorErrors() {editorErrors={};questionEditorError='';requestError=null;}
   const activeProject = $derived(projects.find(p=>p.id===activeProjectId));
   function runProjectId(run:Run) {return sessionProjectId(run.session_id,run.project_id,sessionProjectIds)||UNFILED_PROJECT_ID;}
   const projectSessions = $derived(sessions.filter(s=>s.project_id===activeProjectId));
@@ -167,7 +170,18 @@
   const savedSession = $derived(sessions.find(s=>s.id===activeSessionId));
   const changed = $derived(!savedSession || stateText!==JSON.stringify(savedSession.state_json,null,2) || questionsText!==JSON.stringify(savedSession.questions_json,null,2) || model!==savedSession.requested_model || sessionName!==savedSession.name);
   function notify(text:string) { toast=text;clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast='',4000); }
-  function makeRequest():Request { const inputErrors=[...Object.values(editorErrors),questionEditorError].filter(Boolean);if(inputErrors.length)throw new Error(inputErrors.join('\n'));let state; let questions; try{state=stateMode==='text'?stateText:JSON.parse(stateText);}catch{throw new Error('State is not valid JSON. Fix the syntax or switch to text.');} try{questions=JSON.parse(questionsText);}catch{throw new Error('Questions are not valid JSON.');} const request={state,model,questions};const errors=validateRequest(request);if(errors.length)throw new Error(errors.join('\n'));return request; }
+  function makeRequest():Request {
+    const inputErrors=[...Object.values(editorErrors),questionEditorError].filter(Boolean);
+    if(inputErrors.length)throw new Error(inputErrors.join('\n'));
+    let state;
+    try { state=stateMode==='text'?stateText:JSON.parse(stateText); }
+    catch { throw new Error('State is not valid JSON. Fix the syntax or switch to text.'); }
+    const questions=parseQuestionsJSON(questionsText);
+    const request={state,model,questions};
+    const errors=validateRequest(request);
+    if(errors.length)throw new Error(errors.join('\n'));
+    return request;
+  }
   function snapshot() { return {version:1,projects,sessions,datasets,experiments,activeProjectId,activeSessionId,sessionProjectIds,sessionFamilyIds,projectDraftIds:activeHistoryRunId?projectDraftIds:{...projectDraftIds,[activeProjectId]:activeSessionId},drafts:{...drafts,[draftKey()]:draftValue()},draft:draftValue(),activeHistoryRunId,draftRunIds,projectViewRunIds:{...projectViewRunIds,[activeProjectId]:activeHistoryRunId},uiVersion:2,preferences:{sidebarCollapsed,wrapCode,paneWidths,questionMode,responseMode,theme:themePreference,zoom:zoomLevel,executionMode:mode}}; }
   async function persist() { if(loading||!canPersist)return false;persisted=false;try{await saveWorkspace(snapshot());persisted=true;return true;}catch(e){error='Unable to save locally: '+errorMessage(e);return false;} }
   $effect(()=>{if(!loading&&canPersist){const copy=JSON.stringify(snapshot());const timer=setTimeout(()=>{void copy;void persist();},500);return()=>clearTimeout(timer);}});
@@ -241,8 +255,8 @@
   }
   async function execute(request:Request,repetition=0) {if(mode==='live'){if(credentialChecking)throw new Error('Waiting for access to your saved API key.');if(!credentialExists)throw new Error('Add your TypeSafe API key in Settings first.');return executeLive(request);}const start=performance.now();await new Promise(resolve=>setTimeout(resolve,350));return {response:generateDemoResponse(request,repetition),latency_ms:Math.round(performance.now()-start)};}
   async function runRequest() {
-    if(running||loading||mode==='live'&&credentialChecking)return;error='';let request:Request;
-    try{request=makeRequest();}catch(e){error=errorMessage(e);return;}
+    if(running||loading||mode==='live'&&credentialChecking)return;error='';requestError=null;let request:Request;
+    try{request=makeRequest();}catch(e){requestError={...errorSnapshot(e),kind:'validation'};error=errorMessage(e);return;}
     keepDraft();running=true;isExample=false;const originViewKey=viewKey();runningViewKey=originViewKey;
     const sourceDraftKey=draftKey();const started=performance.now();
     const run:Run={id:crypto.randomUUID(),session_id:activeSessionId,project_id:activeProjectId,name:sessionName,request_json:structuredClone(request),response_json:null,requested_model:model,resolved_model:null,latency_ms:0,input_tokens:null,output_tokens:null,status:'success',error_json:null,created_at:new Date().toISOString(),source:mode};
@@ -311,13 +325,13 @@
           <!-- Focusable separators implement the WAI-ARIA window splitter pattern. -->
           <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
           <div class="pane-splitter" role="separator" aria-label="Resize questions and response" aria-orientation="vertical" aria-valuemin="20" aria-valuemax="60" aria-valuenow={Math.round(paneWidths[2]*100)} tabindex="0" onpointerdown={e=>startResize(e,1)} onkeydown={e=>resizeKey(e,1)}></div>
-          <div class="pane response-pane"><div class="pane-header"><div><h2>Response</h2>{#if currentRun?.status==='error'}<span class="response-status">Failed</span>{:else if response}<span class="response-status">{isExample?'example':response.model==='synthetic-demo'?'demo':'200'}</span>{/if}</div><div class="pane-tools"><div class="segmented"><button class:chosen={responseMode==='json'} onclick={()=>responseMode='json'}>JSON</button><button class:chosen={responseMode==='visual'} onclick={()=>responseMode='visual'}>Overview</button></div><button class="icon-button" aria-label="Copy response JSON" title="Copy response" disabled={!response&&currentRun?.status!=='error'} onclick={()=>copy(JSON.stringify(currentRun?.status==='error'?currentRun.error_json:response,null,2))}><Copy size={12}/></button><button class="icon-button" aria-label={responseExpanded?"Restore editor layout":"Expand response"} title={responseExpanded?"Restore editor layout":"Expand response"} onclick={()=>responseExpanded=!responseExpanded}>{#if responseExpanded}<Minimize2 size={13}/>{:else}<Maximize2 size={13}/>{/if}</button></div></div>
-            <div class="pane-body">{#if runningHere}<div class="tool-empty">Running evaluation…</div>{:else if currentRun?.status==='error'}<RunError error={currentRun.error_json}/>{:else if responseMode==='json'}<CodeEditor value={response?JSON.stringify(response,null,2):''} readonly label="Response JSON" wrap={wrapCode}/>{:else}<ResponseView {response} questions={responseRequest?.questions||{}} requestedModel={responseRequest?.model} latencyMs={responseLatency} example={isExample} running={runningHere}/>{/if}</div>
-            <div class="pane-footer"><span>{currentRun?.status==='error'?'Run failed':response?.model||'No response'}{#if response&&responseLatency!==null} · {responseLatency} ms{/if}</span><span title={responseDraftChanged?'Inputs have changed. Run again to update the response.':undefined}>{responseDraftChanged?'Inputs changed':response?.usage?.input_tokens!==null&&response?.usage?.input_tokens!==undefined?`${response.usage.input_tokens} input tokens`:isExample?'Synthetic example':currentRun?'Saved':''}</span></div>
+          <div class="pane response-pane"><div class="pane-header"><div><h2>Response</h2>{#if responseError}<span class="response-status failed">{requestError?'Invalid request':'Failed'}</span>{:else if response}<span class="response-status">{isExample?'example':response.model==='synthetic-demo'?'demo':'200'}</span>{/if}</div><div class="pane-tools"><div class="segmented"><button class:chosen={responseMode==='json'} onclick={()=>responseMode='json'}>JSON</button><button class:chosen={responseMode==='visual'} onclick={()=>responseMode='visual'}>Overview</button></div><button class="icon-button" aria-label="Copy response JSON" title="Copy response" disabled={!response&&!responseError} onclick={()=>copy(JSON.stringify(responseError??response,null,2))}><Copy size={12}/></button><button class="icon-button" aria-label={responseExpanded?"Restore editor layout":"Expand response"} title={responseExpanded?"Restore editor layout":"Expand response"} onclick={()=>responseExpanded=!responseExpanded}>{#if responseExpanded}<Minimize2 size={13}/>{:else}<Maximize2 size={13}/>{/if}</button></div></div>
+            <div class="pane-body">{#if runningHere}<div class="tool-empty">Running evaluation…</div>{:else if responseError}<RunError error={responseError} title={requestError?'Request not sent':'Run failed'}/>{:else if responseMode==='json'}<CodeEditor value={response?JSON.stringify(response,null,2):''} readonly label="Response JSON" wrap={wrapCode}/>{:else}<ResponseView {response} questions={responseRequest?.questions||{}} requestedModel={responseRequest?.model} latencyMs={responseLatency} example={isExample} running={runningHere}/>{/if}</div>
+            <div class="pane-footer"><span>{requestError?'Request not sent':responseError?'Run failed':response?.model||'No response'}{#if response&&!responseError&&responseLatency!==null} · {responseLatency} ms{/if}</span><span title={responseDraftChanged?'Inputs have changed. Run again to update the response.':undefined}>{requestError?'Fix inputs and run again':responseDraftChanged?'Inputs changed':response?.usage?.input_tokens!==null&&response?.usage?.input_tokens!==undefined?`${response.usage.input_tokens} input tokens`:isExample?'Synthetic example':currentRun?'Saved':''}</span></div>
           </div>
         </section>
         {#if showWarnings&&warnings.length}<div class="warning-panel">{#each warnings as warning}<p><AlertTriangle size={12}/><strong>{warning.questionId}</strong> {warning.message}</p>{/each}</div>{/if}
-        <div class="run-toolbar"><div class="run-config"><label class="mode-select"><span class="live-dot" class:demo={mode==='demo'}></span><select aria-label="Execution mode" value={mode} disabled={loading||running} onchange={event=>setExecutionMode(event.currentTarget.value as ExecutionMode)}><option value="demo">Demo</option><option value="live" disabled={!desktop||!credentialExists&&!credentialChecking}>Live API</option></select></label><span class="toolbar-divider"></span><label class="model-select"><span>Model</span><input aria-label="Requested model" bind:value={model}/></label><button class="icon-button" class:wrap-active={wrapCode} aria-label="Toggle line wrapping" title="Toggle line wrapping" onclick={()=>wrapCode=!wrapCode}><AlignLeft size={13}/></button></div><div class="run-actions"><span class="run-meta">{credentialChecking&&mode==='live'?'Checking saved API key…':currentRun?`${currentRun.status} · ${date(currentRun.created_at)}`:mode==='demo'?'Synthetic responses':'Ready'}</span><button class="btn primary run-button" disabled={running||loading||mode==='live'&&credentialChecking} onclick={runRequest}><Play size={11} fill="currentColor"/>{running?'Running…':'Run'}<kbd>⌘ ↵</kbd></button></div></div>
+        <div class="run-toolbar"><div class="run-config"><label class="mode-select"><span class="live-dot" class:demo={mode==='demo'}></span><select aria-label="Execution mode" value={mode} disabled={loading||running} onchange={event=>setExecutionMode(event.currentTarget.value as ExecutionMode)}><option value="demo">Demo</option><option value="live" disabled={!desktop||!credentialExists&&!credentialChecking}>Live API</option></select></label><span class="toolbar-divider"></span><label class="model-select"><span>Model</span><input aria-label="Requested model" bind:value={model}/></label><button class="icon-button" class:wrap-active={wrapCode} aria-label="Toggle line wrapping" title="Toggle line wrapping" onclick={()=>wrapCode=!wrapCode}><AlignLeft size={13}/></button></div><div class="run-actions"><span class="run-meta">{credentialChecking&&mode==='live'?'Checking saved API key…':requestError?'Fix request errors':currentRun?`${currentRun.status} · ${date(currentRun.created_at)}`:mode==='demo'?'Synthetic responses':'Ready'}</span><button class="btn primary run-button" disabled={running||loading||mode==='live'&&credentialChecking} onclick={runRequest}><Play size={11} fill="currentColor"/>{running?'Running…':'Run'}<kbd>⌘ ↵</kbd></button></div></div>
         <div class="tool-statusbar"><button onclick={focusHistory}><History size={11}/> History <span>{projectRuns.length}</span></button><span>{!canPersist?'Storage unavailable':persisted?'Saved locally':'Saving…'} · {desktop?'SQLite':'Browser storage'}</span></div>
       {:else if page==='Datasets'}
         {#if !selectedDataset}<div class="page-heading"><div><h1>Datasets</h1></div><div class="heading-actions"><button class="btn" onclick={()=>{modal='dataset';importError='';}}><Plus size={14}/> Create dataset</button><label class="btn primary upload-button"><Upload size={14}/> Import CSV / JSONL<input type="file" accept=".csv,.jsonl,.json" onchange={readDataset}/></label></div></div>{/if}

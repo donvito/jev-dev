@@ -27,6 +27,9 @@
   --syntax-punctuation: #555e68;
   --syntax-bracket: #4b5563;
   --syntax-invalid: #b42335;
+  --error-text: #a3112f;
+  --error-surface: #fff1f3;
+  --error-border: #ef9aaa;
   --bg: var(--canvas);
   --panel: var(--surface);
   --line: var(--border);
@@ -64,9 +67,16 @@
   --syntax-punctuation: #b0b7c2;
   --syntax-bracket: #c1c8d0;
   --syntax-invalid: #ff9ba6;
+  --error-text: #ff9ba6;
+  --error-surface: #321b22;
+  --error-border: #8b4054;
 }
 html, body { background: var(--canvas); color: var(--text-primary); }
 input, textarea, select { color-scheme: inherit; }
 input::placeholder, textarea::placeholder { color: var(--text-muted); }
 .appearance-select { border: 1px solid var(--border); border-radius: 3px; background: var(--surface); color: var(--text-primary); padding: 5px 8px; min-width: 120px; font-size: 11px; }
 .theme-toggle { flex-shrink: 0; }
+.error-banner { background: var(--error-surface); color: var(--error-text); border-color: var(--error-border); border-left: 4px solid var(--error-text); font-size: 12px; padding: 12px 14px; }
+.error-banner .icon-button { color: var(--error-text); }
+.error-text, .error-message, .linter-status.warning { color: var(--error-text); }
+.response-status.failed, .run-result-icon.failed { background: var(--error-surface); color: var(--error-text); }
