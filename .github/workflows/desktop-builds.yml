@@ -1,0 +1,412 @@
+name: Desktop builds
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'codex/**'
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing release tag to build, such as v0.1.1; leave blank to validate the selected branch'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+          - platform: linux-x64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD_TARGET: ${{ matrix.target }}
+      BUILD_BUNDLES: ${{ matrix.bundles }}
+      BUILD_PLATFORM: ${{ matrix.platform }}
+      BUILD_RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_type == 'tag' && github.ref_name || '' }}
+      EVENT_SHA: ${{ github.sha }}
+      CARGO_TERM_COLOR: always
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+
+    steps:
+      - name: Validate requested tag format
+        run: |
+          if [[ -n "$BUILD_RELEASE_TAG" ]]; then
+            git check-ref-format "refs/tags/$BUILD_RELEASE_TAG"
+          fi
+
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BUILD_RELEASE_TAG != '' && format('refs/tags/{0}', env.BUILD_RELEASE_TAG) || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify source commit
+        run: |
+          head_commit=$(git rev-parse HEAD)
+          if [[ -n "$BUILD_RELEASE_TAG" ]]; then
+            tag_commit=$(git rev-parse --verify "refs/tags/$BUILD_RELEASE_TAG^{commit}")
+            [[ "$head_commit" == "$tag_commit" ]]
+          else
+            [[ "$head_commit" == "$EVENT_SHA" ]]
+          fi
+          printf 'Building source commit %s\n' "$head_commit"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Verify app versions
+        id: version
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const read = (file) => readFileSync(file, 'utf8');
+          const packageJson = JSON.parse(read('package.json'));
+          const packageLock = JSON.parse(read('package-lock.json'));
+          const tauri = JSON.parse(read('src-tauri/tauri.conf.json'));
+          const cargo = read('src-tauri/Cargo.toml');
+          const cargoLock = read('src-tauri/Cargo.lock');
+          const app = read('src/App.svelte');
+          const cargoVersion = cargo.match(/\[package\][\s\S]*?\nversion\s*=\s*"([^"]+)"/)?.[1];
+          const cargoLockVersion = cargoLock.match(/\[\[package\]\]\s*\nname = "jev-agent"\s*\nversion = "([^"]+)"/)?.[1];
+          const footerVersion = app.match(/class="footer-version">\s*v([^<\s]+)\s*</)?.[1];
+          const versions = {
+            'package.json': packageJson.version,
+            'package-lock.json': packageLock.version,
+            'package-lock.json root package': packageLock.packages[''].version,
+            'Cargo.toml': cargoVersion,
+            'Cargo.lock jev-agent': cargoLockVersion,
+            'tauri.conf.json': tauri.version,
+            'App.svelte footer': footerVersion,
+          };
+          const version = packageJson.version;
+          if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
+            throw new Error('App version is not a valid release version');
+          }
+          for (const [source, value] of Object.entries(versions)) {
+            if (value !== version) throw new Error(`${source} version ${value} differs from ${version}`);
+          }
+          const tag = process.env.BUILD_RELEASE_TAG;
+          if (tag && tag !== `v${version}`) {
+            throw new Error(`Requested tag ${tag} does not match app version v${version}`);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          console.log(`All app versions agree: ${version}`);
+          NODE
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl wget file libwebkit2gtk-4.1-dev libxdo-dev \
+            libssl-dev libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev \
+            patchelf xdg-utils xvfb xauth dbus-x11 x11-utils imagemagick
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal --no-self-update
+          rustup default 1.88.0
+          rustup target add "$BUILD_TARGET" --toolchain 1.88.0
+          rustc --version
+          cargo --version
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: src-tauri -> target
+          key: desktop-${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check frontend
+        run: npm run check
+
+      - name: Test frontend
+        run: npm test
+
+      - name: Build frontend assets for Rust tests
+        run: npm run build
+
+      - name: Test Rust backend
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Build native installers
+        run: npm run tauri -- build --ci --target "$BUILD_TARGET" --bundles "$BUILD_BUNDLES" -- --locked
+
+      - name: Smoke test Windows installers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $logDir = Join-Path $env:GITHUB_WORKSPACE 'desktop-smoke'
+          New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+          Start-Transcript -Path (Join-Path $logDir 'windows-smoke.log') -Force
+          try {
+            Add-Type -AssemblyName System.Drawing
+            Add-Type -AssemblyName System.Windows.Forms
+
+            function Invoke-Installer([string]$file, [string]$arguments, [string]$label) {
+              $installerProcess = Start-Process -FilePath $file -ArgumentList $arguments -PassThru
+              if (!$installerProcess.WaitForExit(180000)) {
+                & taskkill.exe /PID $installerProcess.Id /T /F | Out-Null
+                throw "$label timed out"
+              }
+              $installerProcess.Refresh()
+              if ($installerProcess.ExitCode -notin @(0, 3010)) {
+                throw "$label failed with code $($installerProcess.ExitCode)"
+              }
+              Write-Host "$label completed with code $($installerProcess.ExitCode)"
+            }
+
+            function Test-InstalledApp([string]$executable, [string]$label) {
+              if (!(Test-Path -LiteralPath $executable)) {
+                throw "Installed executable missing: $executable"
+              }
+              $appProcess = Start-Process -FilePath $executable -WorkingDirectory (Split-Path $executable) -PassThru
+              try {
+                $deadline = [DateTime]::UtcNow.AddSeconds(15)
+                while ([DateTime]::UtcNow -lt $deadline) {
+                  Start-Sleep -Milliseconds 500
+                  $appProcess.Refresh()
+                  if ($appProcess.HasExited) {
+                    throw "$label app exited early with code $($appProcess.ExitCode)"
+                  }
+                }
+                $appProcess.Refresh()
+                if ($appProcess.MainWindowHandle -eq [IntPtr]::Zero -or $appProcess.MainWindowTitle -ne 'jev dev') {
+                  throw "$label app did not create the jev dev window"
+                }
+                Write-Host "$label stayed alive for 15 seconds with window '$($appProcess.MainWindowTitle)'"
+                try {
+                  $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                  $bitmap = [System.Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
+                  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+                  try {
+                    $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+                    $bitmap.Save((Join-Path $logDir "$label-window.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+                  } finally {
+                    $graphics.Dispose()
+                    $bitmap.Dispose()
+                  }
+                } catch {
+                  Write-Warning "Screenshot unavailable: $($_.Exception.Message)"
+                }
+              } finally {
+                $appProcess.Refresh()
+                if (!$appProcess.HasExited) {
+                  & taskkill.exe /PID $appProcess.Id /T /F | Out-Null
+                }
+              }
+            }
+
+            $bundleRoot = Join-Path $env:GITHUB_WORKSPACE "src-tauri\target\$env:BUILD_TARGET\release\bundle"
+            $nsisFiles = @(Get-ChildItem -LiteralPath (Join-Path $bundleRoot 'nsis') -Filter '*-setup.exe' -File)
+            $msiFiles = @(Get-ChildItem -LiteralPath (Join-Path $bundleRoot 'msi') -Filter '*.msi' -File)
+            if ($nsisFiles.Count -ne 1 -or $msiFiles.Count -ne 1) {
+              throw 'Expected one NSIS installer and one MSI installer'
+            }
+
+            $nsisDir = Join-Path $env:RUNNER_TEMP 'jev-nsis-smoke'
+            try {
+              # NSIS requires /D last, without quotes around its path.
+              Invoke-Installer $nsisFiles[0].FullName "/S /NS /D=$nsisDir" 'NSIS install'
+              Test-InstalledApp (Join-Path $nsisDir 'jev-agent.exe') 'nsis'
+            } finally {
+              $uninstaller = Join-Path $nsisDir 'uninstall.exe'
+              if (Test-Path -LiteralPath $uninstaller) {
+                # _? keeps the uninstaller in place so its actual process is tracked.
+                Invoke-Installer $uninstaller "/S _?=$nsisDir" 'NSIS uninstall'
+              }
+            }
+            if (Test-Path -LiteralPath (Join-Path $nsisDir 'jev-agent.exe')) {
+              throw 'NSIS uninstall left the installed executable behind'
+            }
+
+            $msiDir = Join-Path $env:RUNNER_TEMP 'jev-msi-smoke'
+            $msiPath = $msiFiles[0].FullName
+            $installLog = Join-Path $logDir 'msi-install.log'
+            $uninstallLog = Join-Path $logDir 'msi-uninstall.log'
+            $msiInstalled = $false
+            try {
+              Invoke-Installer 'msiexec.exe' "/i `"$msiPath`" /qn /norestart INSTALLDIR=`"$msiDir`" /L*v `"$installLog`"" 'MSI install'
+              $msiInstalled = $true
+              Test-InstalledApp (Join-Path $msiDir 'jev-agent.exe') 'msi'
+            } finally {
+              if ($msiInstalled) {
+                Invoke-Installer 'msiexec.exe' "/x `"$msiPath`" /qn /norestart /L*v `"$uninstallLog`"" 'MSI uninstall'
+              }
+            }
+          } finally {
+            Stop-Transcript
+          }
+
+      - name: Smoke test Linux packages
+        if: runner.os == 'Linux'
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p desktop-smoke
+          export SMOKE_DIR="$PWD/desktop-smoke"
+          bundle_root="src-tauri/target/$BUILD_TARGET/release/bundle"
+          deb_files=("$bundle_root"/deb/*.deb)
+          appimage_files=("$bundle_root"/appimage/*.AppImage)
+          [[ ${#deb_files[@]} == 1 && -f "${deb_files[0]}" ]]
+          [[ ${#appimage_files[@]} == 1 && -f "${appimage_files[0]}" ]]
+          [[ "$(dpkg-deb -f "${deb_files[0]}" Version)" == "$APP_VERSION" ]]
+          [[ "$(dpkg-deb -f "${deb_files[0]}" Architecture)" == amd64 ]]
+          sudo apt-get install -y --no-install-recommends "$(realpath "${deb_files[0]}")"
+          [[ -x /usr/bin/jev-agent ]]
+          chmod +x "${appimage_files[0]}"
+          export SMOKE_APPIMAGE="$(realpath "${appimage_files[0]}")"
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' python3 <<'PY'
+          import os
+          import pathlib
+          import re
+          import signal
+          import subprocess
+          import time
+
+          output = pathlib.Path(os.environ['SMOKE_DIR'])
+          for label, executable in [('deb', '/usr/bin/jev-agent'), ('appimage', os.environ['SMOKE_APPIMAGE'])]:
+              environment = os.environ.copy()
+              state = pathlib.Path(os.environ['RUNNER_TEMP']) / 'jev-native-smoke' / label
+              for variable, directory in [
+                  ('XDG_CONFIG_HOME', 'config'),
+                  ('XDG_DATA_HOME', 'data'),
+                  ('XDG_CACHE_HOME', 'cache'),
+                  ('XDG_STATE_HOME', 'state'),
+                  ('XDG_RUNTIME_DIR', 'runtime'),
+              ]:
+                  location = state / directory
+                  location.mkdir(parents=True, exist_ok=True, mode=0o700)
+                  environment[variable] = str(location)
+              with (output / f'{label}-startup.log').open('w') as log:
+                  process = subprocess.Popen(
+                      [executable], env=environment, stdout=log,
+                      stderr=subprocess.STDOUT, start_new_session=True,
+                  )
+                  try:
+                      deadline = time.monotonic() + 15
+                      while time.monotonic() < deadline:
+                          if process.poll() is not None:
+                              raise RuntimeError(f'{label} exited early with status {process.returncode}')
+                          time.sleep(0.5)
+                      tree = subprocess.check_output(['xwininfo', '-root', '-tree'], text=True)
+                      (output / f'{label}-windows.log').write_text(tree)
+                      window = re.search(r'(0x[0-9a-fA-F]+)\s+"jev dev"', tree)
+                      if window is None:
+                          raise RuntimeError(f'{label} did not create the jev dev window')
+                      subprocess.run(
+                          ['import', '-window', window.group(1), str(output / f'{label}-window.png')],
+                          check=True, timeout=15,
+                      )
+                      print(f'{label}: process stayed alive for 15 seconds and created its window')
+                  finally:
+                      try:
+                          os.killpg(process.pid, signal.SIGTERM)
+                          process.wait(timeout=5)
+                      except subprocess.TimeoutExpired:
+                          os.killpg(process.pid, signal.SIGKILL)
+                          process.wait(timeout=5)
+                      except ProcessLookupError:
+                          pass
+          PY
+
+      - name: Collect installers and provenance
+        env:
+          WORKFLOW_COMMIT: ${{ github.workflow_sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import { copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+          import path from 'node:path';
+          const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
+          const platform = process.env.BUILD_PLATFORM;
+          const bundleRoot = path.join('src-tauri', 'target', process.env.BUILD_TARGET, 'release', 'bundle');
+          const output = 'desktop-artifacts';
+          mkdirSync(output, { recursive: true });
+          const packages = platform === 'windows-x64'
+            ? [
+                { bundle: 'nsis', suffix: '-setup.exe', name: `jev-dev_${version}_windows-x64-setup.exe` },
+                { bundle: 'msi', suffix: '.msi', name: `jev-dev_${version}_windows-x64.msi` },
+              ]
+            : [
+                { bundle: 'appimage', suffix: '.AppImage', name: `jev-dev_${version}_linux-x64.AppImage` },
+                { bundle: 'deb', suffix: '.deb', name: `jev-dev_${version}_linux-amd64.deb` },
+              ];
+          const sha256 = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
+          const installers = packages.map(({ bundle, suffix, name }) => {
+            const directory = path.join(bundleRoot, bundle);
+            const matches = readdirSync(directory).filter((file) => file.endsWith(suffix));
+            if (matches.length !== 1) {
+              throw new Error(`Expected one ${bundle} installer; found ${matches.length}`);
+            }
+            const originalName = matches[0];
+            const destination = path.join(output, name);
+            copyFileSync(path.join(directory, originalName), destination);
+            return { original_name: originalName, name, sha256: sha256(destination) };
+          });
+          const manifest = {
+            version,
+            platform,
+            target: process.env.BUILD_TARGET,
+            source_tag: process.env.BUILD_RELEASE_TAG || null,
+            source_commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+            workflow_commit: process.env.WORKFLOW_COMMIT,
+            run_url: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            node_version: process.version,
+            rust_version: execFileSync('rustc', ['--version'], { encoding: 'utf8' }).trim(),
+            installers,
+          };
+          const manifestName = 'source-manifest.json';
+          writeFileSync(path.join(output, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
+          const checksums = installers.map(({ name, sha256: hash }) => `${hash}  ${name}`);
+          checksums.push(`${sha256(path.join(output, manifestName))}  ${manifestName}`);
+          writeFileSync(path.join(output, 'SHA256SUMS'), `${checksums.join('\n')}\n`);
+          console.log(JSON.stringify(manifest, null, 2));
+          NODE
+
+      - name: Upload native smoke results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-smoke-${{ matrix.platform }}
+          path: desktop-smoke/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload installers
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jev-dev-${{ steps.version.outputs.version }}-${{ matrix.platform }}
+          path: desktop-artifacts/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
