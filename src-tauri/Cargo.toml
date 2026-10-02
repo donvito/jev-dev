@@ -1,6 +1,6 @@
 [package]
 name = "jev-agent"
-version = "0.1.0"
+version = "0.1.1"
 description = "A local-first experimentation workbench for Jev"
 authors = ["jev dev"]
 edition = "2021"
