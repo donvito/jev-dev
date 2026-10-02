@@ -125,7 +125,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential curl wget file libwebkit2gtk-4.1-dev libxdo-dev \
             libssl-dev libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev \
-            patchelf xdg-utils xvfb xauth dbus-x11 x11-utils imagemagick
+            patchelf xdg-utils xvfb xauth dbus-x11 x11-utils imagemagick \
+            gnome-keyring libglib2.0-bin
 
       - name: Set up Rust
         run: |
@@ -140,6 +141,7 @@ jobs:
         with:
           workspaces: src-tauri -> target
           key: desktop-${{ matrix.target }}
+          cache-on-failure: true
 
       - name: Install frontend dependencies
         run: npm ci
@@ -159,6 +161,34 @@ jobs:
       - name: Build native installers
         run: npm run tauri -- build --ci --target "$BUILD_TARGET" --bundles "$BUILD_BUNDLES" -- --locked
 
+      - name: Compile native credential smoke helper
+        run: |
+          dependency_dir="src-tauri/target/$BUILD_TARGET/release/deps"
+          keyring_rlibs=("$dependency_dir"/libkeyring-*.rlib)
+          [[ ${#keyring_rlibs[@]} == 1 && -f "${keyring_rlibs[0]}" ]]
+          helper="$RUNNER_TEMP/jev-credential-smoke"
+          if [[ "$BUILD_PLATFORM" == windows-x64 ]]; then
+            helper="$helper.exe"
+          fi
+          helper_source="$RUNNER_TEMP/jev-credential-smoke.rs"
+          cat > "$helper_source" <<'RUST'
+          fn main() -> Result<(), Box<dyn std::error::Error>> {
+              let entry = keyring::Entry::new("ai.jev.agent.ci", "native-smoke")?;
+              assert!(matches!(entry.get_password(), Err(keyring::Error::NoEntry)));
+              entry.set_password("ci-placeholder")?;
+              let saved = entry.get_password();
+              entry.delete_credential()?;
+              assert_eq!(saved?, "ci-placeholder");
+              assert!(matches!(entry.get_password(), Err(keyring::Error::NoEntry)));
+              println!("Native credential store: save, read, delete, and missing-entry checks passed");
+              Ok(())
+          }
+          RUST
+          rustc --edition=2021 --crate-name jev_credential_smoke \
+            --extern "keyring=${keyring_rlibs[0]}" -L "dependency=$dependency_dir" \
+            "$helper_source" -o "$helper"
+          printf 'CREDENTIAL_SMOKE_HELPER=%s\n' "$helper" >> "$GITHUB_ENV"
+
       - name: Smoke test Windows installers
         if: runner.os == 'Windows'
         shell: pwsh
@@ -168,6 +198,10 @@ jobs:
           New-Item -ItemType Directory -Path $logDir -Force | Out-Null
           Start-Transcript -Path (Join-Path $logDir 'windows-smoke.log') -Force
           try {
+            & $env:CREDENTIAL_SMOKE_HELPER
+            if ($LASTEXITCODE -ne 0) {
+              throw "Native credential store check failed with code $LASTEXITCODE"
+            }
             Add-Type -AssemblyName System.Drawing
             Add-Type -AssemblyName System.Windows.Forms
 
@@ -232,7 +266,7 @@ jobs:
               throw 'Expected one NSIS installer and one MSI installer'
             }
 
-            $nsisDir = Join-Path $env:RUNNER_TEMP 'jev-nsis-smoke'
+            $nsisDir = Join-Path $env:RUNNER_TEMP 'jev-windows-smoke'
             try {
               # NSIS requires /D last, without quotes around its path.
               Invoke-Installer $nsisFiles[0].FullName "/S /NS /D=$nsisDir" 'NSIS install'
@@ -248,7 +282,9 @@ jobs:
               throw 'NSIS uninstall left the installed executable behind'
             }
 
-            $msiDir = Join-Path $env:RUNNER_TEMP 'jev-msi-smoke'
+            # Tauri preserves the previous installation path after uninstalling NSIS.
+            # Both formats use that same location and are installed sequentially.
+            $msiDir = $nsisDir
             $msiPath = $msiFiles[0].FullName
             $installLog = Join-Path $logDir 'msi-install.log'
             $uninstallLog = Join-Path $logDir 'msi-uninstall.log'
@@ -284,7 +320,14 @@ jobs:
           [[ -x /usr/bin/jev-agent ]]
           chmod +x "${appimage_files[0]}"
           export SMOKE_APPIMAGE="$(realpath "${appimage_files[0]}")"
-          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' python3 <<'PY'
+          for label in deb appimage; do
+            export SMOKE_LABEL="$label"
+            if [[ "$label" == deb ]]; then
+              export SMOKE_EXECUTABLE=/usr/bin/jev-agent
+            else
+              export SMOKE_EXECUTABLE="$SMOKE_APPIMAGE"
+            fi
+            dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' python3 <<'PY'
           import os
           import pathlib
           import re
@@ -292,51 +335,111 @@ jobs:
           import subprocess
           import time
 
+          def stop_process(process):
+              try:
+                  os.killpg(process.pid, signal.SIGTERM)
+                  process.wait(timeout=5)
+              except subprocess.TimeoutExpired:
+                  os.killpg(process.pid, signal.SIGKILL)
+                  process.wait(timeout=5)
+              except ProcessLookupError:
+                  pass
+
           output = pathlib.Path(os.environ['SMOKE_DIR'])
-          for label, executable in [('deb', '/usr/bin/jev-agent'), ('appimage', os.environ['SMOKE_APPIMAGE'])]:
-              environment = os.environ.copy()
-              state = pathlib.Path(os.environ['RUNNER_TEMP']) / 'jev-native-smoke' / label
-              for variable, directory in [
-                  ('XDG_CONFIG_HOME', 'config'),
-                  ('XDG_DATA_HOME', 'data'),
-                  ('XDG_CACHE_HOME', 'cache'),
-                  ('XDG_STATE_HOME', 'state'),
-                  ('XDG_RUNTIME_DIR', 'runtime'),
-              ]:
-                  location = state / directory
-                  location.mkdir(parents=True, exist_ok=True, mode=0o700)
-                  environment[variable] = str(location)
-              with (output / f'{label}-startup.log').open('w') as log:
-                  process = subprocess.Popen(
-                      [executable], env=environment, stdout=log,
-                      stderr=subprocess.STDOUT, start_new_session=True,
-                  )
-                  try:
-                      deadline = time.monotonic() + 15
-                      while time.monotonic() < deadline:
-                          if process.poll() is not None:
-                              raise RuntimeError(f'{label} exited early with status {process.returncode}')
-                          time.sleep(0.5)
-                      tree = subprocess.check_output(['xwininfo', '-root', '-tree'], text=True)
-                      (output / f'{label}-windows.log').write_text(tree)
-                      window = re.search(r'(0x[0-9a-fA-F]+)\s+"jev dev"', tree)
-                      if window is None:
-                          raise RuntimeError(f'{label} did not create the jev dev window')
-                      subprocess.run(
-                          ['import', '-window', window.group(1), str(output / f'{label}-window.png')],
-                          check=True, timeout=15,
+          label = os.environ['SMOKE_LABEL']
+          executable = os.environ['SMOKE_EXECUTABLE']
+          environment = os.environ.copy()
+          state = pathlib.Path(os.environ['RUNNER_TEMP']) / 'jev-native-smoke' / label
+          for variable, directory in [
+              ('XDG_CONFIG_HOME', 'config'),
+              ('XDG_DATA_HOME', 'data'),
+              ('XDG_CACHE_HOME', 'cache'),
+              ('XDG_STATE_HOME', 'state'),
+              ('XDG_RUNTIME_DIR', 'runtime'),
+          ]:
+              location = state / directory
+              location.mkdir(parents=True, exist_ok=True, mode=0o700)
+              environment[variable] = str(location)
+          # Prevent GNOME Keyring from falling back to a legacy directory in HOME.
+          (pathlib.Path(environment['XDG_DATA_HOME']) / 'keyrings').mkdir(parents=True, exist_ok=True, mode=0o700)
+
+          def dbus_call(destination, object_path, method, *arguments):
+              return subprocess.run(
+                  ['gdbus', 'call', '--session', '--dest', destination,
+                   '--object-path', object_path, '--method', method, *arguments],
+                  env=environment, capture_output=True, text=True, timeout=3,
+              )
+
+          with (output / f'{label}-keyring.log').open('w') as keyring_log:
+              provider = subprocess.Popen(
+                  ['gnome-keyring-daemon', '--foreground', '--components=secrets', '--unlock'],
+                  env=environment, stdin=subprocess.PIPE, stdout=keyring_log,
+                  stderr=subprocess.STDOUT, start_new_session=True,
+              )
+              try:
+                  provider.stdin.write(b'jev-ci-synthetic-keyring-password')
+                  provider.stdin.close()
+                  deadline = time.monotonic() + 15
+                  while time.monotonic() < deadline:
+                      if provider.poll() is not None:
+                          raise RuntimeError(f'{label} keyring provider exited early')
+                      owner = dbus_call(
+                          'org.freedesktop.DBus', '/org/freedesktop/DBus',
+                          'org.freedesktop.DBus.GetConnectionUnixProcessID', 'org.freedesktop.secrets',
                       )
-                      print(f'{label}: process stayed alive for 15 seconds and created its window')
-                  finally:
+                      owner_pid = re.search(r'uint32\s+(\d+)', owner.stdout)
+                      if owner.returncode == 0 and owner_pid and int(owner_pid.group(1)) == provider.pid:
+                          alias = dbus_call(
+                              'org.freedesktop.secrets', '/org/freedesktop/secrets',
+                              'org.freedesktop.Secret.Service.ReadAlias', 'default',
+                          )
+                          collection = re.search(r"objectpath ['\"]([^'\"]+)['\"]", alias.stdout)
+                          if alias.returncode == 0 and collection and collection.group(1) != '/':
+                              locked = dbus_call(
+                                  'org.freedesktop.secrets', collection.group(1),
+                                  'org.freedesktop.DBus.Properties.Get', 'org.freedesktop.Secret.Collection', 'Locked',
+                              )
+                              if locked.returncode == 0 and '<false>' in locked.stdout:
+                                  keyring_log.write(f'Unlocked default collection: {collection.group(1)}\n')
+                                  keyring_log.flush()
+                                  break
+                      time.sleep(0.25)
+                  else:
+                      raise RuntimeError(f'{label} keyring provider did not expose an unlocked default collection')
+                  with (output / f'{label}-credentials.log').open('w') as credential_log:
+                      subprocess.run(
+                          [environment['CREDENTIAL_SMOKE_HELPER']], env=environment,
+                          stdout=credential_log, stderr=subprocess.STDOUT, check=True, timeout=30,
+                      )
+                  print(f'{label}: unlocked Secret Service and native credential round trip passed')
+
+                  with (output / f'{label}-startup.log').open('w') as log:
+                      process = subprocess.Popen(
+                          [executable], env=environment, stdout=log,
+                          stderr=subprocess.STDOUT, start_new_session=True,
+                      )
                       try:
-                          os.killpg(process.pid, signal.SIGTERM)
-                          process.wait(timeout=5)
-                      except subprocess.TimeoutExpired:
-                          os.killpg(process.pid, signal.SIGKILL)
-                          process.wait(timeout=5)
-                      except ProcessLookupError:
-                          pass
+                          deadline = time.monotonic() + 15
+                          while time.monotonic() < deadline:
+                              if process.poll() is not None:
+                                  raise RuntimeError(f'{label} exited early with status {process.returncode}')
+                              time.sleep(0.5)
+                          tree = subprocess.check_output(['xwininfo', '-root', '-tree'], text=True)
+                          (output / f'{label}-windows.log').write_text(tree)
+                          window = re.search(r'(0x[0-9a-fA-F]+)\s+"jev dev"', tree)
+                          if window is None:
+                              raise RuntimeError(f'{label} did not create the jev dev window')
+                          subprocess.run(
+                              ['import', '-window', window.group(1), str(output / f'{label}-window.png')],
+                              check=True, timeout=15,
+                          )
+                          print(f'{label}: process stayed alive for 15 seconds and created its window')
+                      finally:
+                          stop_process(process)
+              finally:
+                  stop_process(provider)
           PY
+          done
 
       - name: Collect installers and provenance
         env:
