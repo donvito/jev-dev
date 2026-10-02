@@ -170,6 +170,17 @@ jobs:
           if [[ "$BUILD_PLATFORM" == windows-x64 ]]; then
             helper="$helper.exe"
           fi
+          native_libraries=()
+          if [[ "$BUILD_PLATFORM" == windows-x64 ]]; then
+            # Cargo normally adds these versioned Windows import-library paths.
+            credential_cargo_cache=$(cygpath -u "${CARGO_HOME:-$HOME/.cargo}")
+            for library_dir in "$credential_cargo_cache"/registry/src/*/windows_x86_64_msvc-*/lib; do
+              if [[ -d "$library_dir" ]]; then
+                native_libraries+=(-L "native=$library_dir")
+              fi
+            done
+            [[ ${#native_libraries[@]} -gt 0 ]]
+          fi
           helper_source="$RUNNER_TEMP/jev-credential-smoke.rs"
           cat > "$helper_source" <<'RUST'
           fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -185,7 +196,9 @@ jobs:
           }
           RUST
           rustc --edition=2021 --crate-name jev_credential_smoke \
-            --extern "keyring=${keyring_rlibs[0]}" -L "dependency=$dependency_dir" \
+            --target "$BUILD_TARGET" --extern "keyring=${keyring_rlibs[0]}" \
+            -L "dependency=$dependency_dir" -L dependency=src-tauri/target/release/deps \
+            "${native_libraries[@]}" \
             "$helper_source" -o "$helper"
           printf 'CREDENTIAL_SMOKE_HELPER=%s\n' "$helper" >> "$GITHUB_ENV"
 

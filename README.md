@@ -87,4 +87,4 @@ For a debug bundle, use `npm run tauri -- build --debug`; output goes to `src-ta
 
 To build only the frontend, run `npm run build`; output goes to `dist/`.
 
-The [desktop build workflow](.github/workflows/desktop-builds.yml) runs frontend checks, frontend and Rust tests, and native Windows/Linux builds. Its artifacts include the installers, SHA-256 checksums, and a manifest identifying the source commit. To rebuild a release, manually run the workflow with its existing tag (for example, `v0.1.1`); the workflow checks out that exact tag and verifies its version before building.
+The [desktop build workflow](.github/workflows/desktop-builds.yml) runs frontend checks, frontend and Rust tests, native Windows/Linux builds, and credential-storage and installer startup checks. Its artifacts include the installers, SHA-256 checksums, and a manifest identifying the source commit. To rebuild a release, manually run the workflow with its existing tag (for example, `v0.1.1`); the workflow checks out that exact tag and verifies its version before building.
