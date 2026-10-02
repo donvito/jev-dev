@@ -71,11 +71,141 @@
   --error-surface: #321b22;
   --error-border: #8b4054;
 }
+:root[data-theme='ocean'] {
+  color-scheme: dark;
+  --canvas: #101b2b;
+  --surface: #162438;
+  --surface-subtle: #1b2d44;
+  --surface-hover: #263b55;
+  --surface-active: #304764;
+  --text-primary: #edf5ff;
+  --text-secondary: #ccdef2;
+  --text-muted: #b1c1d6;
+  --border: #304764;
+  --border-strong: #647e9b;
+  --control: #8ac8ff;
+  --control-text: #101b2b;
+  --chart-track: #304764;
+  --chart-fill: #8ac8ff;
+  --focus: #8ac8ff;
+  --selection: #2d4866;
+  --caret: #edf5ff;
+  --overlay: #06101dcc;
+  --shadow: #06101d80;
+  --syntax-key: #8ac8ff;
+  --syntax-string: #9fdfcf;
+  --syntax-number: #f4ce91;
+  --syntax-boolean: #d4b6ff;
+  --syntax-null: #c7bedf;
+  --syntax-punctuation: #b9cbdf;
+  --syntax-bracket: #d1e2f5;
+  --syntax-invalid: #ffadb9;
+  --error-text: #ffadb9;
+  --error-surface: #392534;
+  --error-border: #9d536b;
+}
+:root[data-theme='forest'] {
+  color-scheme: dark;
+  --canvas: #111e19;
+  --surface: #172920;
+  --surface-subtle: #1e3328;
+  --surface-hover: #254032;
+  --surface-active: #2b493a;
+  --text-primary: #edf7f0;
+  --text-secondary: #cee4d6;
+  --text-muted: #acccba;
+  --border: #2b493a;
+  --border-strong: #628572;
+  --control: #9bd7b0;
+  --control-text: #111e19;
+  --chart-track: #2b493a;
+  --chart-fill: #9bd7b0;
+  --focus: #9bd7b0;
+  --selection: #2e4d3d;
+  --caret: #edf7f0;
+  --overlay: #08120dcc;
+  --shadow: #08120d80;
+  --syntax-key: #9bd7b0;
+  --syntax-string: #e0d49a;
+  --syntax-number: #f0bc94;
+  --syntax-boolean: #cbb8f3;
+  --syntax-null: #bdbbd5;
+  --syntax-punctuation: #b9d1c2;
+  --syntax-bracket: #d0e6d8;
+  --syntax-invalid: #ffaab6;
+  --error-text: #ffaab6;
+  --error-surface: #38252a;
+  --error-border: #985660;
+}
+:root[data-theme='lavender'] {
+  color-scheme: light;
+  --canvas: #f6f3fb;
+  --surface: #ffffff;
+  --surface-subtle: #f8f5fc;
+  --surface-hover: #eee7f6;
+  --surface-active: #e5dbf1;
+  --text-primary: #2e2340;
+  --text-secondary: #51435f;
+  --text-muted: #665979;
+  --border: #dfd5ec;
+  --border-strong: #a594b8;
+  --control: #684ca0;
+  --control-text: #ffffff;
+  --chart-track: #e5dbf1;
+  --chart-fill: #684ca0;
+  --focus: #684ca0;
+  --selection: #e6ddf2;
+  --caret: #2e2340;
+  --overlay: #26163766;
+  --shadow: #26163724;
+  --syntax-key: #58429a;
+  --syntax-string: #326c55;
+  --syntax-number: #80552b;
+  --syntax-boolean: #8b376b;
+  --syntax-null: #6d567b;
+  --syntax-punctuation: #635770;
+  --syntax-bracket: #51435f;
+  --syntax-invalid: #a5234c;
+  --error-text: #a5234c;
+  --error-surface: #fff0f5;
+  --error-border: #e4a0b8;
+}
+:root[data-theme='sand'] {
+  color-scheme: light;
+  --canvas: #f8f3e9;
+  --surface: #fffcf6;
+  --surface-subtle: #faf5ec;
+  --surface-hover: #f0e5d5;
+  --surface-active: #e8d9c4;
+  --text-primary: #352b20;
+  --text-secondary: #574735;
+  --text-muted: #685949;
+  --border: #e1d3bf;
+  --border-strong: #ad9678;
+  --control: #805c35;
+  --control-text: #fffcf6;
+  --chart-track: #e8d9c4;
+  --chart-fill: #805c35;
+  --focus: #805c35;
+  --selection: #eddecc;
+  --caret: #352b20;
+  --overlay: #2d211566;
+  --shadow: #2d211524;
+  --syntax-key: #365e86;
+  --syntax-string: #456745;
+  --syntax-number: #80532a;
+  --syntax-boolean: #785280;
+  --syntax-null: #685770;
+  --syntax-punctuation: #685949;
+  --syntax-bracket: #574735;
+  --syntax-invalid: #a53036;
+  --error-text: #a53036;
+  --error-surface: #fff0e9;
+  --error-border: #e0a198;
+}
 html, body { background: var(--canvas); color: var(--text-primary); }
 input, textarea, select { color-scheme: inherit; }
 input::placeholder, textarea::placeholder { color: var(--text-muted); }
-.appearance-select { border: 1px solid var(--border); border-radius: 3px; background: var(--surface); color: var(--text-primary); padding: 5px 8px; min-width: 120px; font-size: 11px; }
-.theme-toggle { flex-shrink: 0; }
 .error-banner { background: var(--error-surface); color: var(--error-text); border-color: var(--error-border); border-left: 4px solid var(--error-text); font-size: 12px; padding: 12px 14px; }
 .error-banner .icon-button { color: var(--error-text); }
 .error-text, .error-message, .linter-status.warning { color: var(--error-text); }
