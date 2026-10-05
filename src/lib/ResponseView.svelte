@@ -1,11 +1,12 @@
 <script lang="ts">
   import { ChevronDown, ChevronRight, ChevronsUpDown, ChevronsDownUp } from 'lucide-svelte';
   import type { Answer, Question, Questions, TypeSafeResponse } from './domain';
+  import { assessAnswer } from './answer-assessment';
   import { scoreLevels, scorePosition, formattedProbability as percent } from './response-distribution';
-  interface Props { response:TypeSafeResponse|null; questions?:Questions; requestedModel?:string; latencyMs?:number|null; example?:boolean; running?:boolean }
-  let { response, questions={}, requestedModel, latencyMs, example=false, running=false }:Props=$props();
+  interface Props { response:TypeSafeResponse|null; questions?:Questions; requestedModel?:string; latencyMs?:number|null; example?:boolean; running?:boolean; expected?:Record<string, unknown> }
+  let { response, questions={}, requestedModel, latencyMs, example=false, running=false, expected }:Props=$props();
   let expanded=$state<string[]>([]);
-  const rows=$derived(Object.keys({...questions,...response?.answers}));
+  const rows=$derived(Object.keys({...questions,...response?.answers,...expected}));
   const allExpanded=$derived(rows.length>0&&rows.every(id=>expanded.includes(id)));
   const synthetic=$derived(example||response?.synthetic===true||response?.model==='synthetic-demo');
   const isObject=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);
@@ -87,9 +88,18 @@
           {@const levels=type==='score'?scoreLevels(question,answer):[]}
           {@const options=type==='choice'?choiceOptions(question,answer):[]}
           {@const isExpanded=expanded.includes(id)}
+          {@const assessment=assessAnswer(answer,question,expected?.[id],expected!==undefined&&Object.hasOwn(expected,id))}
           <tr class="result-row" class:expanded={isExpanded}>
             <td class="question-cell"><div class="question-heading"><button class="expand-row" aria-label={`${isExpanded?'Collapse':'Expand'} ${id}`} aria-expanded={isExpanded} onclick={()=>toggle(id)}>{#if isExpanded}<ChevronDown size={13}/>{:else}<ChevronRight size={13}/>{/if}</button><span class="question-id">{id}</span></div><div class="instructions">{#if question?.instructions!==undefined}{@render structured(question.instructions,0)}{:else}<span class="unavailable">Instructions unavailable</span>{/if}</div></td>
             <td class="result-cell">
+              {#if expected!==undefined}
+                <div class="assessment" aria-label={`${id}: ${assessment.status}`}>
+                  <span class="assessment-status" class:match={assessment.status==='Match'} class:issue={['Mismatch','Invalid label','Missing answer'].includes(assessment.status)}>{assessment.status}</span>
+                  <span>Expected <b>{Object.hasOwn(expected,id)?safeText(expected[id]):'No label'}</b></span>
+                  <span>{type==='score'?'Predicted level':'Predicted'} <b>{safeText(assessment.actual)}</b></span>
+                  {#if type==='noul'}<small>True when P(true) ≥ 50%</small>{/if}
+                </div>
+              {/if}
               {#if !answer}<span class="unavailable">No answer returned</span>
               {:else if type==='score'}<div class="score-result"><strong>{numeric(answer.score)}</strong>{#if levels.length}<span>of {levels[levels.length-1]}</span>{/if}</div>{#if !isExpanded}<div class="confidence">Confidence: <span>{percent(answer.confidence)}</span></div>{/if}
               {:else if type==='noul'}<div class="noul-result" title="P(true): probability the answer is true">{#if probability(answer.noul)}<strong>{percent(answer.noul)}</strong><span>true</span>{:else}<span class="unavailable">Probability unavailable</span>{/if}</div>{#if probability(answer.noul)}<div class="noul-track" aria-label={`P(true): ${percent(answer.noul)}`}><span class="probability-diamond" style={`left:${answer.noul*100}%`}></span></div>{#if isExpanded}<div class="noul-result false-result"><strong>{percent(1-answer.noul)}</strong><span>false</span></div>{/if}{/if}
@@ -110,6 +120,7 @@
 </div>
 
 <style>
+.assessment{display:flex;flex-wrap:wrap;gap:6px 12px;margin-bottom:12px;font-size:11px;color:var(--text-secondary)}.assessment>span:not(.assessment-status){flex-basis:100%;overflow-wrap:anywhere}.assessment b{font-family:var(--mono,monospace);font-weight:500;margin-left:5px;color:var(--text-primary)}.assessment-status{border:1px solid var(--border-strong);border-radius:4px;padding:2px 7px;font-weight:600}.assessment-status.match{border-style:solid}.assessment-status.issue{border-style:dashed}.assessment small{font-size:10px;color:var(--text-muted)}
 .response-results{container:response-results / inline-size;width:100%;min-width:0;color:var(--text-primary);background:var(--surface);font-size:12px}
 .response-table{width:100%;border-collapse:collapse;table-layout:fixed;text-align:left}.key-column{width:46%}.result-column{width:36%}.primitive-column{width:18%}
 .response-table>thead th{padding:12px 14px;border-bottom:1px solid var(--border);background:var(--surface-subtle);font-size:11px;color:var(--text-secondary);font-weight:500;vertical-align:top}.result-heading{display:flex;flex-wrap:wrap;align-items:baseline;gap:5px 10px}.model-name{font:11px/1.5 var(--mono,monospace);color:var(--text-primary);overflow-wrap:anywhere}.latency{font-size:10px;color:var(--text-muted);white-space:nowrap}
