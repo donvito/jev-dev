@@ -14,11 +14,11 @@ Download the installers from the [latest release](https://github.com/donvito/jev
 | Windows, x64 | `windows-x64-setup.exe` or `windows-x64.msi` |
 | Linux, x86_64 | `linux-amd64.deb` for Debian/Ubuntu, or `linux-x64.AppImage` |
 
-On Debian/Ubuntu, install the downloaded package with `sudo apt install ./jev-dev_0.1.1_linux-amd64.deb`. To run the AppImage:
+On Debian/Ubuntu, install the downloaded package with `sudo apt install ./jev-dev_0.1.2_linux-amd64.deb`. To run the AppImage:
 
 ```sh
-chmod +x jev-dev_0.1.1_linux-x64.AppImage
-./jev-dev_0.1.1_linux-x64.AppImage
+chmod +x jev-dev_0.1.2_linux-x64.AppImage
+./jev-dev_0.1.2_linux-x64.AppImage
 ```
 
 Linux packages are built on Ubuntu 22.04. The Debian package installs its WebKitGTK 4.1 dependencies; AppImage bundles them. Use an active desktop D-Bus session. Saving an API key requires a running Secret Service provider, such as GNOME Keyring. Demo mode works without a key. If AppImage reports a missing FUSE library, use the [AppImage FUSE guide](https://docs.appimage.org/user-guide/troubleshooting/fuse.html), or run it with `--appimage-extract-and-run`.
@@ -52,6 +52,8 @@ npm run desktop
 ```
 
 For live requests, save a [TypeSafe API key](https://console.typesafe.ai/) in **Settings** and select **Live API**. **Demo** works without a key.
+
+On macOS, API keys are stored in a local file restricted to your macOS user account, without Keychain password prompts. The file is unencrypted, so apps running as you can also read it. Keys are never included in workspace backups or run history. After updating from a version that used Keychain, save your API key once in **Settings**; existing Keychain entries are not read or migrated automatically. Windows and Linux continue to use the OS credential store.
 
 Optional browser preview:
 
@@ -87,4 +89,4 @@ For a debug bundle, use `npm run tauri -- build --debug`; output goes to `src-ta
 
 To build only the frontend, run `npm run build`; output goes to `dist/`.
 
-The [desktop build workflow](.github/workflows/desktop-builds.yml) runs frontend checks, frontend and Rust tests, native Windows/Linux builds, and credential-storage and installer startup checks. Its artifacts include the installers, SHA-256 checksums, and a manifest identifying the source commit. To rebuild a release, manually run the workflow with its existing tag (for example, `v0.1.1`); the workflow checks out that exact tag and verifies its version before building.
+The [desktop build workflow](.github/workflows/desktop-builds.yml) runs frontend checks, frontend and Rust tests, native Windows/Linux builds, and credential-storage and installer startup checks. Its artifacts include the installers, SHA-256 checksums, and a manifest identifying the source commit. To rebuild a release, manually run the workflow with its existing tag (for example, `v0.1.2`); the workflow checks out that exact tag and verifies its version before building.

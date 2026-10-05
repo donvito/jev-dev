@@ -1,6 +1,8 @@
 mod client;
 mod credentials;
 mod error;
+#[cfg(target_os = "macos")]
+mod local_credentials;
 mod native;
 mod storage;
 
@@ -14,6 +16,7 @@ pub fn run() {
             std::fs::create_dir_all(&directory)?;
             let database = storage::Database::open(&directory.join("jev-agent.sqlite3"))?;
             app.manage(database);
+            app.manage(credentials::CredentialStore::new(&directory));
             app.manage(client::ApiClient::new()?);
             Ok(())
         })
@@ -28,6 +31,7 @@ pub fn run() {
             client::execute_request,
             native::save_export,
             native::open_documentation,
+            native::set_window_appearance,
         ])
         .run(tauri::generate_context!())
         .expect("jev dev could not start its desktop runtime");

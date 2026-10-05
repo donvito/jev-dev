@@ -210,10 +210,11 @@ fn validate_success_response(
 #[tauri::command]
 pub async fn execute_request(
     client: State<'_, ApiClient>,
+    credentials: State<'_, credentials::CredentialStore>,
     request: Value,
 ) -> AppResult<Evaluation> {
     validate_request(&request)?;
-    let key = credentials::get_key().await?;
+    let key = credentials::get_key(&credentials).await?;
     let mut authorization =
         HeaderValue::from_str(&format!("Bearer {}", key.as_str())).map_err(|_| {
             AppError::new(

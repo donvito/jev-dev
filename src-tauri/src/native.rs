@@ -1,5 +1,80 @@
 use crate::error::{AppError, AppResult};
 
+// Synchronize native title controls too: macOS can leave a light appearance
+// override on them after the window switches to dark mode. Keep the webview
+// subtree separate; it follows the palette applied by the frontend.
+#[cfg(target_os = "macos")]
+fn sync_chrome_appearance(
+    view: &objc2_app_kit::NSView,
+    content: &objc2_app_kit::NSView,
+    appearance: Option<&objc2_app_kit::NSAppearance>,
+) {
+    use objc2_app_kit::NSAppearanceCustomization;
+    if std::ptr::eq(view, content) {
+        return;
+    }
+    view.setAppearance(appearance);
+    for child in view.subviews().iter() {
+        sync_chrome_appearance(&child, content, appearance);
+    }
+}
+
+#[tauri::command]
+pub async fn set_window_appearance(
+    window: tauri::Window,
+    theme: Option<tauri::Theme>,
+    background: tauri::window::Color,
+) -> AppResult<()> {
+    let appearance_error =
+        || AppError::new("appearance", "The window appearance could not be updated.");
+    window
+        .set_background_color(Some(background))
+        .map_err(|_| appearance_error())?;
+    window.set_theme(theme).map_err(|_| appearance_error())?;
+
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{
+            NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua,
+            NSAppearanceNameDarkAqua, NSWindow,
+        };
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let native_window = window.clone();
+        window
+            .run_on_main_thread(move || {
+                let result = (|| {
+                    let pointer = native_window.ns_window().map_err(|_| appearance_error())?;
+                    // The handle belongs to this live Tauri window, and AppKit is
+                    // accessed only inside its main-thread callback.
+                    let window = unsafe { &*pointer.cast::<NSWindow>() };
+                    let appearance = theme.and_then(|theme| {
+                        let name = unsafe {
+                            match theme {
+                                tauri::Theme::Dark => NSAppearanceNameDarkAqua,
+                                _ => NSAppearanceNameAqua,
+                            }
+                        };
+                        NSAppearance::appearanceNamed(name)
+                    });
+                    // Apply the selected appearance to the window and native chrome.
+                    window.setAppearance(appearance.as_deref());
+                    if let Some(content) = window.contentView() {
+                        if let Some(frame) = unsafe { content.superview() } {
+                            sync_chrome_appearance(&frame, &content, appearance.as_deref());
+                        }
+                    }
+
+                    Ok(())
+                })();
+                let _ = sender.send(result);
+            })
+            .map_err(|_| appearance_error())?;
+        receiver.await.map_err(|_| appearance_error())??;
+    }
+    Ok(())
+}
+
 /// A caller may suggest a filename, never a filesystem destination. Only the
 /// path explicitly chosen in the native save dialog is written.
 fn suggested_filename(filename: &str) -> String {
