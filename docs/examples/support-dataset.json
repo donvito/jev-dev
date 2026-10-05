@@ -1,0 +1,17 @@
+[
+  {
+    "id": "ticket_001",
+    "state": { "message": "Production is down. All API requests fail. We are blocked and need urgent help." },
+    "expected": { "is_urgent": true }
+  },
+  {
+    "id": "ticket_002",
+    "state": { "message": "Please email a copy of last month's invoice when convenient." },
+    "expected": { "is_urgent": false }
+  },
+  {
+    "id": "ticket_003",
+    "state": { "message": "Where can I find instructions for changing our company logo?" },
+    "expected": { "is_urgent": false }
+  }
+]

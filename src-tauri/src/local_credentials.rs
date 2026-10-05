@@ -1,11 +1,15 @@
 use std::{
-    fs::{self, DirBuilder, OpenOptions, Permissions},
-    io::{ErrorKind, Read, Write},
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
+    fs::{self, OpenOptions, Permissions},
+    io::{ErrorKind, Read},
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
 use zeroize::Zeroizing;
+
+// Writing legacy plaintext files is only available to migration test fixtures.
+#[cfg(test)]
+use std::{fs::DirBuilder, io::Write, os::unix::fs::DirBuilderExt};
 
 use crate::error::{AppError, AppResult};
 
@@ -34,6 +38,7 @@ impl LocalCredentialStore {
             Ok(metadata) if metadata.is_dir() => {}
             Ok(_) => return Err(local_storage_error()),
             Err(error) if error.kind() == ErrorKind::NotFound && !create => return Ok(false),
+            #[cfg(test)]
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 match DirBuilder::new().mode(0o700).create(&self.directory) {
                     Ok(()) => {}
@@ -98,6 +103,7 @@ impl LocalCredentialStore {
         Ok(Some(Zeroizing::new(key.to_owned())))
     }
 
+    #[cfg(test)]
     pub fn save_key(&self, key: &str) -> AppResult<()> {
         if !valid_key(key.as_bytes()) {
             return Err(AppError::new(

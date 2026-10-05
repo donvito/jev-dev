@@ -29,3 +29,25 @@
 .topbar-controls{display:flex;align-items:center;gap:12px;flex-shrink:0}
 .topbar{gap:12px}.breadcrumbs{min-width:0}.project-breadcrumb{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:1000px){:where(:root[data-runtime="desktop"]) .topbar{padding-inline:8px;gap:8px}:where(:root[data-runtime="desktop"]) .topbar-controls{gap:0}:where(:root[data-runtime="desktop"]) .breadcrumbs{gap:6px}:where(:root[data-runtime="desktop"]) .project-breadcrumb{max-width:120px}:where(:root[data-runtime="desktop"]) .settings-card{min-width:0}}@container app-viewport (max-width:1000px){.topbar{padding-inline:8px;gap:8px}.topbar-controls{gap:0}.breadcrumbs{gap:6px}.project-breadcrumb{max-width:120px}.settings-card{min-width:0}}
+
+/* Project context precedes page navigation without changing the toolbar height. */
+.breadcrumbs>.menu-wrap{min-width:0}
+.topbar .project-breadcrumb{max-width:260px;min-width:0;padding:5px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-primary);gap:6px;text-align:left;line-height:1.4}
+.project-breadcrumb:hover{background:var(--surface-hover);border-color:var(--border-strong)}
+.project-breadcrumb>svg{flex-shrink:0}
+.current-project-label{flex-shrink:0;font-size:11px;font-weight:400;color:var(--text-muted)}
+.current-project-name{min-width:0;font-size:11px;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.breadcrumbs>span:last-child{white-space:nowrap}
+@media(max-width:1000px){:where(:root[data-runtime="desktop"]) .topbar .project-breadcrumb{max-width:210px;padding:4px 6px}}
+@container app-viewport (max-width:1000px){.topbar .project-breadcrumb{max-width:210px;padding:4px 6px}}
+
+/* Workspace navigation is global; the lower group follows the selected project. */
+.sidebar .workspace-navigation{padding-top:10px;padding-bottom:10px}
+.sidebar .project-navigation{border-top:1px solid var(--border);padding-top:10px}
+.sidebar-section-label{padding:4px 9px 8px;font-size:9px;font-weight:550;letter-spacing:.5px;text-transform:uppercase;color:var(--text-muted)}
+.sidebar nav>.sidebar-new-session{border:1px solid var(--border);background:var(--surface);color:var(--text-primary);margin:0 3px 7px;height:32px}
+.sidebar nav>.sidebar-new-session:hover{background:var(--surface-hover);border-color:var(--border-strong)}
+.sidebar-collapsed .sidebar-section-label{display:none}
+.sidebar-collapsed .sidebar nav>.sidebar-new-session{margin:0 0 7px}
+@media(max-width:1000px){:where(:root[data-runtime="desktop"]) .sidebar-section-label{display:none}:where(:root[data-runtime="desktop"]) .sidebar nav>.sidebar-new-session{margin:0 0 7px}}
+@container app-viewport (max-width:1000px){.sidebar-section-label{display:none}.sidebar nav>.sidebar-new-session{margin:0 0 7px}}
